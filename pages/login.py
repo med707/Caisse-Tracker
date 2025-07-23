@@ -2,7 +2,6 @@ import streamlit as st
 import pyrebase
 from firestore_utils import add_message, get_messages
 
-# --- Config Firebase ---
 firebaseConfig = {
     'apiKey': 'AIzaSyBI29zVQRZhOdigOBEt7gA8YYaEeoEU8Pk',
     'authDomain': 'gestion-supermarket.firebaseapp.com',
@@ -10,7 +9,7 @@ firebaseConfig = {
     'storageBucket': 'gestion-supermarket.appspot.com',
     'messagingSenderId': '553981389663',
     'appId': '1:553981389663:web:c8db775b8cf47e2ae5e4ea',
-    'databaseURL': ''  # Non requis ici
+    'databaseURL': ''  # Non nécessaire pour Firestore REST
 }
 
 firebase = pyrebase.initialize_app(firebaseConfig)
