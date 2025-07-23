@@ -1,14 +1,13 @@
 import requests
 import datetime
 
-FIREBASE_PROJECT_ID = "TON_PROJECT_ID"  # Remplace par ton projectId Firebase
+FIREBASE_PROJECT_ID = "TON_PROJECT_ID"
 
 def add_message(user, message):
     id_token = user['idToken']
     local_id = user['localId']
 
-    doc_id = f"{local_id}_{int(datetime.datetime.now().timestamp())}"
-    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages/{doc_id}"
+    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages/{local_id}_{datetime.datetime.now().timestamp()}"
     
     headers = {"Authorization": f"Bearer {id_token}"}
     data = {
@@ -19,9 +18,8 @@ def add_message(user, message):
         }
     }
 
-    response = requests.put(url, headers=headers, json=data)
+    response = requests.patch(url, headers=headers, json=data)
     response.raise_for_status()
-
 
 def get_messages(user):
     id_token = user['idToken']
@@ -33,10 +31,5 @@ def get_messages(user):
         return ["Erreur de récupération."]
     
     docs = response.json().get("documents", [])
-    user_msgs = [
-        doc["fields"]["message"]["stringValue"]
-        for doc in docs
-        if doc["fields"].get("user", {}).get("stringValue", "") == user['email']
-    ]
-    return user_msgs
+    return [doc["fields"]["message"]["stringValue"] for doc in docs]
 
