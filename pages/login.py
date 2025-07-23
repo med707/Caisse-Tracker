@@ -1,22 +1,16 @@
-import sys
-import os
-
-# Ajouter le dossier parent au path pour pouvoir importer firestore_utils.py
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from firestore_utils import add_message, get_messages
 import streamlit as st
 import pyrebase
+from firestore_utils import add_message, get_messages
 
-# --- Configuration Firebase (remplace par tes infos) ---
+# --- Config Firebase ---
 firebaseConfig = {
-    'apiKey': 'TON_API_KEY',
-    'authDomain': 'TON_PROJECT.firebaseapp.com',
-    'projectId': 'TON_PROJECT_ID',
-    'storageBucket': 'TON_PROJECT.appspot.com',
-    'messagingSenderId': 'TON_SENDER_ID',
-    'appId': 'TON_APP_ID',
-    'databaseURL': ''
+    'apiKey': 'AIzaSyBI29zVQRZhOdigOBEt7gA8YYaEeoEU8Pk',
+    'authDomain': 'gestion-supermarket.firebaseapp.com',
+    'projectId': 'gestion-supermarket',
+    'storageBucket': 'gestion-supermarket.appspot.com',
+    'messagingSenderId': '553981389663',
+    'appId': '1:553981389663:web:c8db775b8cf47e2ae5e4ea',
+    'databaseURL': ''  # Non requis ici
 }
 
 firebase = pyrebase.initialize_app(firebaseConfig)
@@ -56,4 +50,3 @@ else:
     if st.button("Se déconnecter"):
         del st.session_state['user']
         st.experimental_rerun()
-
