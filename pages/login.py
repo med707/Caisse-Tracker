@@ -1,51 +1,50 @@
 import streamlit as st
-import pyrebase
-from firestore_utils import add_message, get_messages
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-firebaseConfig = {
-    'apiKey': 'AIzaSyBI29zVQRZhOdigOBEt7gA8YYaEeoEU8Pk',
-    'authDomain': 'gestion-supermarket.firebaseapp.com',
-    'projectId': 'gestion-supermarket',
-    'storageBucket': 'gestion-supermarket.appspot.com',
-    'messagingSenderId': '553981389663',
-    'appId': '1:553981389663:web:c8db775b8cf47e2ae5e4ea',
-    'databaseURL': ''  # Non nécessaire pour Firestore REST
-}
+# --- Initialisation Firebase Admin (une fois) ---
+if not firebase_admin._apps:
+    cred = credentials.Certificate("serviceAccountKey.json")  # Chemin vers ton fichier JSON
+    firebase_admin.initialize_app(cred)
 
-firebase = pyrebase.initialize_app(firebaseConfig)
-auth = firebase.auth()
+db = firestore.client()
 
-st.title("🔐 Connexion Firebase avec Streamlit")
+st.title("🔐 Connexion simple + Firestore avec Firebase Admin SDK")
 
-if 'user' not in st.session_state:
+# Simuler un login basique par email
+if 'user_email' not in st.session_state:
     email = st.text_input("Email")
-    password = st.text_input("Mot de passe", type="password")
-
-    if st.button("Se connecter"):
-        try:
-            user = auth.sign_in_with_email_and_password(email, password)
-            st.session_state['user'] = user
-            st.success(f"Connecté en tant que : {email}")
+    if st.button("Se connecter (simulation)"):
+        if email.strip() == "":
+            st.error("Veuillez entrer un email valide.")
+        else:
+            st.session_state['user_email'] = email.strip()
             st.experimental_rerun()
-        except:
-            st.error("Email ou mot de passe invalide.")
 else:
-    user = st.session_state['user']
-    st.success(f"Connecté en tant que : {user['email']}")
+    st.success(f"Connecté en tant que : {st.session_state['user_email']}")
 
-    new_msg = st.text_input("💬 Ajouter un message Firestore")
-    if st.button("Ajouter"):
-        try:
-            add_message(user, new_msg)
+    # Ajouter un message Firestore
+    new_message = st.text_input("💬 Ajouter un message")
+    if st.button("Ajouter le message"):
+        if new_message.strip() == "":
+            st.error("Le message ne peut pas être vide.")
+        else:
+            doc_ref = db.collection('messages').document()
+            doc_ref.set({
+                "user": st.session_state['user_email'],
+                "message": new_message.strip(),
+                "timestamp": firestore.SERVER_TIMESTAMP
+            })
             st.success("Message ajouté !")
-        except Exception as e:
-            st.error(f"Erreur lors de l'ajout : {e}")
 
-    st.subheader("📄 Messages enregistrés :")
-    messages = get_messages(user)
+    # Afficher les messages
+    st.subheader("📄 Messages enregistrés")
+    messages = db.collection('messages').order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
     for msg in messages:
-        st.write("•", msg)
+        data = msg.to_dict()
+        st.write(f"**{data.get('user')}** : {data.get('message')}")
 
+    # Bouton déconnexion
     if st.button("Se déconnecter"):
-        del st.session_state['user']
+        del st.session_state['user_email']
         st.experimental_rerun()
