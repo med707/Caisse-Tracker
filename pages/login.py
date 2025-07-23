@@ -1,8 +1,8 @@
 import streamlit as st
-import pyrebase
+import pyrebase4 as pyrebase
 from firestore_utils import add_message, get_messages
 
-# --- Configuration Firebase (remplace par tes infos réelles) ---
+# --- Config Firebase ---
 firebaseConfig = {
     'apiKey': 'AIzaSyBI29zVQRZhOdigOBEt7gA8YYaEeoEU8Pk',
     'authDomain': 'gestion-supermarket.firebaseapp.com',
@@ -10,7 +10,7 @@ firebaseConfig = {
     'storageBucket': 'gestion-supermarket.appspot.com',
     'messagingSenderId': '553981389663',
     'appId': '1:553981389663:web:c8db775b8cf47e2ae5e4ea',
-    'databaseURL': ''  # Pas obligatoire ici
+    'databaseURL': ''
 }
 
 firebase = pyrebase.initialize_app(firebaseConfig)
@@ -29,7 +29,7 @@ if 'user' not in st.session_state:
             st.success(f"Connecté en tant que : {email}")
             st.experimental_rerun()
         except Exception as e:
-            st.error(f"Email ou mot de passe invalide : {e}")
+            st.error(f"Email ou mot de passe invalide. ({e})")
 else:
     user = st.session_state['user']
     st.success(f"Connecté en tant que : {user['email']}")
