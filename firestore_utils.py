@@ -1,44 +1,46 @@
-import requests
+import firebase_admin
+from firebase_admin import credentials, auth, firestore
 import datetime
 
-FIREBASE_PROJECT_ID = "gestion-supermarket"  # Mets ici ton project ID exact
+# Initialise Firebase Admin avec ta clé JSON de service
+# Remplace 'path/to/serviceAccountKey.json' par le chemin réel de ta clé
+cred = credentials.Certificate('path/to/serviceAccountKey.json')
+firebase_admin.initialize_app(cred)
 
-def add_message(user, message):
-    id_token = user['idToken']
-    local_id = user['localId']
+db = firestore.client()
 
-    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages/{local_id}_{int(datetime.datetime.now().timestamp())}"
-    headers = {
-        "Authorization": f"Bearer {id_token}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "fields": {
-            "message": {"stringValue": message},
-            "timestamp": {"timestampValue": datetime.datetime.utcnow().isoformat() + "Z"},
-            "user": {"stringValue": user['email']}
-        }
-    }
+def verify_id_token(id_token):
+    """
+    Vérifie et décode un token d'identification Firebase.
+    Retourne les infos utilisateur si valide, sinon None.
+    """
+    try:
+        decoded_token = auth.verify_id_token(id_token)
+        return decoded_token
+    except Exception as e:
+        print(f"Erreur de vérification du token: {e}")
+        return None
 
-    response = requests.patch(url, headers=headers, json=data)
-    response.raise_for_status()
+def add_message(user_uid, message):
+    """
+    Ajoute un message dans Firestore dans la collection 'messages'.
+    user_uid est l'UID Firebase de l'utilisateur.
+    """
+    doc_ref = db.collection('messages').document()
+    doc_ref.set({
+        'user_uid': user_uid,
+        'message': message,
+        'timestamp': datetime.datetime.utcnow()
+    })
 
+def get_messages():
+    """
+    Récupère tous les messages ordonnés par date décroissante.
+    """
+    messages_ref = db.collection('messages').order_by('timestamp', direction=firestore.Query.DESCENDING)
+    docs = messages_ref.stream()
 
-def get_messages(user):
-    id_token = user['idToken']
-    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages"
-    headers = {
-        "Authorization": f"Bearer {id_token}"
-    }
-
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        return ["Erreur lors de la récupération des messages."]
-
-    docs = response.json().get("documents", [])
-    messages = []
-    for doc in docs:
-        fields = doc.get("fields", {})
-        msg = fields.get("message", {}).get("stringValue", "")
-        messages.append(msg)
-    return messages
+    return [
+        {'user_uid': doc.to_dict().get('user_uid'), 'message': doc.to_dict().get('message'), 'timestamp': doc.to_dict().get('timestamp')}
+        for doc in docs
+    ]
