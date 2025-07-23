@@ -1,23 +1,44 @@
-import firebase_admin
-from firebase_admin import credentials, firestore
+import requests
+import datetime
 
-# Initialiser Firebase Admin SDK
-if not firebase_admin._apps:
-    cred = credentials.Certificate("serviceAccountKey.json")
-    firebase_admin.initialize_app(cred)
-
-db = firestore.client()
+FIREBASE_PROJECT_ID = "gestion-supermarket"  # Mets ici ton project ID exact
 
 def add_message(user, message):
-    email = user['email']
-    doc_ref = db.collection("messages").document()
-    doc_ref.set({
-        "user": email,
-        "message": message
-    })
+    id_token = user['idToken']
+    local_id = user['localId']
+
+    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages/{local_id}_{int(datetime.datetime.now().timestamp())}"
+    headers = {
+        "Authorization": f"Bearer {id_token}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "fields": {
+            "message": {"stringValue": message},
+            "timestamp": {"timestampValue": datetime.datetime.utcnow().isoformat() + "Z"},
+            "user": {"stringValue": user['email']}
+        }
+    }
+
+    response = requests.patch(url, headers=headers, json=data)
+    response.raise_for_status()
+
 
 def get_messages(user):
-    email = user['email']
-    messages_ref = db.collection("messages").where("user", "==", email)
-    docs = messages_ref.stream()
-    return [doc.to_dict()["message"] for doc in docs]
+    id_token = user['idToken']
+    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages"
+    headers = {
+        "Authorization": f"Bearer {id_token}"
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        return ["Erreur lors de la récupération des messages."]
+
+    docs = response.json().get("documents", [])
+    messages = []
+    for doc in docs:
+        fields = doc.get("fields", {})
+        msg = fields.get("message", {}).get("stringValue", "")
+        messages.append(msg)
+    return messages
