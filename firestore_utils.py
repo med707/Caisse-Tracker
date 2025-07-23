@@ -1,35 +1,34 @@
-import requests
-import datetime
+import firebase_admin
+from firebase_admin import credentials, firestore
+import os
 
-FIREBASE_PROJECT_ID = "TON_PROJECT_ID"
+# Initialisation Firebase Admin
+if not firebase_admin._apps:
+    cred_path = "serviceAccountKey.json"  # Assurez-vous que ce fichier existe dans votre projet
+    if not os.path.exists(cred_path):
+        raise FileNotFoundError(f"Fichier {cred_path} non trouvé. Veuillez télécharger la clé JSON depuis Firebase Console.")
+
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
 
 def add_message(user, message):
-    id_token = user['idToken']
-    local_id = user['localId']
+    email = user.get('email') or user['user']['email']
+    if not email:
+        raise ValueError("Email introuvable dans l'objet utilisateur.")
 
-    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages/{local_id}_{datetime.datetime.now().timestamp()}"
-    
-    headers = {"Authorization": f"Bearer {id_token}"}
-    data = {
-        "fields": {
-            "message": {"stringValue": message},
-            "timestamp": {"timestampValue": datetime.datetime.utcnow().isoformat() + "Z"},
-            "user": {"stringValue": user['email']}
-        }
-    }
-
-    response = requests.patch(url, headers=headers, json=data)
-    response.raise_for_status()
+    doc_ref = db.collection("messages").document()
+    doc_ref.set({
+        "email": email,
+        "message": message
+    })
 
 def get_messages(user):
-    id_token = user['idToken']
-    url = f"https://firestore.googleapis.com/v1/projects/{FIREBASE_PROJECT_ID}/databases/(default)/documents/messages"
-    headers = {"Authorization": f"Bearer {id_token}"}
+    email = user.get('email') or user['user']['email']
+    if not email:
+        raise ValueError("Email introuvable dans l'objet utilisateur.")
 
-    response = requests.get(url, headers=headers)
-    if response.status_code != 200:
-        return ["Erreur de récupération."]
-    
-    docs = response.json().get("documents", [])
-    return [doc["fields"]["message"]["stringValue"] for doc in docs]
-
+    messages_ref = db.collection("messages").where("email", "==", email)
+    docs = messages_ref.stream()
+    return [doc.to_dict().get("message") for doc in docs if doc.to_dict().get("message")]
