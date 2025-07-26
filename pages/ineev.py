@@ -7,7 +7,7 @@ import numpy as np
 import sys
 import os
 
-# Add parent directory to Python path
+# Add parent directory to Python path for lang_utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lang_utils import get_translation
 
@@ -60,10 +60,12 @@ def get_dates_for_day(day_name, weeks=4):
 dates = get_dates_for_day(day_of_week, weeks=4)
 date_strs = [d.strftime("%Y-%m-%d") for d in dates]
 
-# Requête SQL
+# Requête SQL adaptée à la table inventory_movements
+# Calcul des totaux = SUM((sale_price - purchase_price) * quantity) par date, catégorie, sous-catégorie
 query = f"""
-    SELECT date, category, subcategory, SUM(price * quantity) as total 
-    FROM purchases 
+    SELECT date, category, subcategory, 
+           SUM((sale_price - purchase_price) * quantity) as total_gain
+    FROM inventory_movements
     WHERE date IN ({','.join(['?']*len(date_strs))})
     GROUP BY date, category, subcategory
     ORDER BY date DESC
@@ -89,7 +91,6 @@ if data:
         latest_date = date_columns[0]
         prev_date = date_columns[1]
 
-        # Safely compute differences only if the columns exist
         if latest_date in pivot_df.columns and prev_date in pivot_df.columns:
             pivot_df[_("difference_7j")] = pivot_df[latest_date] - pivot_df[prev_date]
             pivot_df[_("pourcentage_variation")] = (pivot_df[_("difference_7j")] / pivot_df[prev_date].replace(0, np.nan)) * 100
@@ -237,4 +238,3 @@ else:
 
 # Fermeture connexion
 conn.close()
-
