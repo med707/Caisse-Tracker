@@ -4,3 +4,5 @@ matplotlib
 pyrebase4
 requests
 fpdf
+openpyxl
+
