@@ -3,3 +3,4 @@ pandas
 matplotlib
 pyrebase4
 requests
+fpdf
