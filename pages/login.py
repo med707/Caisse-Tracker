@@ -2,7 +2,6 @@ import streamlit as st
 import pyrebase4 as pyrebase
 from firestore_utils import add_message, get_messages
 
-# --- Config Firebase ---
 firebaseConfig = {
     'apiKey': 'AIzaSyBI29zVQRZhOdigOBEt7gA8YYaEeoEU8Pk',
     'authDomain': 'gestion-supermarket.firebaseapp.com',
@@ -28,8 +27,8 @@ if 'user' not in st.session_state:
             st.session_state['user'] = user
             st.success(f"Connecté en tant que : {email}")
             st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Email ou mot de passe invalide. ({e})")
+        except:
+            st.error("Email ou mot de passe invalide.")
 else:
     user = st.session_state['user']
     st.success(f"Connecté en tant que : {user['email']}")
@@ -50,3 +49,4 @@ else:
     if st.button("Se déconnecter"):
         del st.session_state['user']
         st.experimental_rerun()
+

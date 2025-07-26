@@ -99,3 +99,4 @@ else:
 
 # --- FERMETURE DB ---
 conn.close()
+
