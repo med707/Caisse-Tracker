@@ -2,6 +2,12 @@ import streamlit as st
 import sqlite3
 from datetime import datetime
 import pandas as pd
+import sys
+import os
+
+# Ajouter le dossier courant au path pour trouver lang_utils.py
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from lang_utils import get_translation
 from fpdf import FPDF
 
@@ -34,13 +40,13 @@ CATEGORIES = {
     "🎉 Autres": {"subcategories": [], "suppliers": []}
 }
 
-st.title("➕ " + t("Ajouter un achat/vente"))
+st.title("➕ " + t("Add a product"))
 
 # --- Connexion à la base ---
 conn = sqlite3.connect("supermarket.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# --- Création table avec colonnes achat/vente ---
+# --- Création table ---
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS purchases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,47 +63,44 @@ CREATE TABLE IF NOT EXISTS purchases (
 conn.commit()
 
 # --- Formulaire d’ajout ---
-category = st.selectbox(t("Catégorie"), list(CATEGORIES.keys()))
+category = st.selectbox(t("Category"), list(CATEGORIES.keys()))
 subs = CATEGORIES[category]["subcategories"]
 if isinstance(subs, dict):
-    main_subcat = st.selectbox(t("Sous-catégorie principale"), list(subs.keys()))
-    subcategory = st.selectbox(t("Sous-catégorie détaillée"), subs[main_subcat])
+    main_subcat = st.selectbox(t("Subcategory main"), list(subs.keys()))
+    subcategory = st.selectbox(t("Subcategory detail"), subs[main_subcat])
 else:
-    subcategory = st.selectbox(t("Sous-catégorie"), subs) if subs else st.text_input(t("Sous-catégorie (libre)"))
+    subcategory = st.selectbox(t("Subcategory"), subs) if subs else st.text_input(t("Subcategory (free text)"))
 
 suppliers = CATEGORIES[category].get("suppliers", [])
-supplier = st.selectbox(t("Fournisseur"), suppliers) if suppliers else st.text_input(t("Fournisseur (libre)"))
+supplier = st.selectbox(t("Supplier"), suppliers) if suppliers else st.text_input(t("Supplier (free text)"))
 
 with st.form("add_form", clear_on_submit=True):
-    product = st.text_input(t("Nom du produit"))
-    quantity = st.number_input(t("Quantité"), min_value=1, step=1)
-    purchase_price = st.number_input(t("Prix d'achat unitaire (TND)"), min_value=0.01, format="%.2f")
-    sale_price = st.number_input(t("Prix de vente unitaire (TND)"), min_value=0.01, format="%.2f")
+    product = st.text_input(t("Product name"))
+    quantity = st.number_input(t("Quantity"), min_value=1, step=1)
+    purchase_price = st.number_input(t("Purchase price per unit (TND)"), min_value=0.01, format="%.2f")
+    sale_price = st.number_input(t("Sale price per unit (TND)"), min_value=0.01, format="%.2f")
     date = st.date_input(t("Date"), value=datetime.today())
-    submitted = st.form_submit_button(t("💾 Enregistrer"))
+    submitted = st.form_submit_button(t("Save"))
 
-if submitted:
-    if not product.strip():
-        st.error(t("⚠️ Veuillez saisir un nom de produit."))
-    elif sale_price < purchase_price:
-        st.warning(t("⚠️ Le prix de vente doit être supérieur ou égal au prix d'achat."))
-    else:
-        cursor.execute("""
-            INSERT INTO purchases (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            product.strip(), category, subcategory, supplier.strip(), quantity, purchase_price, sale_price, date.strftime("%Y-%m-%d")
-        ))
-        conn.commit()
-        gain = (sale_price - purchase_price) * quantity
-        st.success(f"✅ {product} ajouté. Gain estimé : {gain:.2f} TND")
+    if submitted:
+        if not product.strip():
+            st.error(t("Please enter a product name."))
+        elif sale_price < purchase_price:
+            st.warning(t("Price must be greater than 0."))
+        else:
+            cursor.execute("""
+                INSERT INTO purchases (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                product.strip(), category, subcategory, supplier.strip(), quantity, purchase_price, sale_price, date.strftime("%Y-%m-%d")
+            ))
+            conn.commit()
+            gain = (sale_price - purchase_price) * quantity
+            st.success(f"✅ {product} {t('Added')}. {t('Gain')}: {gain:.2f} TND")
+            st.experimental_rerun()
 
-# BOUTON DE RAFRAÎCHISSEMENT EN DEHORS DU FORMULAIRE
-if st.button(t("🔄 Rafraîchir la page")):
-    st.experimental_rerun()
-
-# --- Affichage tableau avec gains ---
-st.header(t("Historique Achat/Vente"))
+# --- Affichage historique avec gains ---
+st.header(t("Purchase History"))
 
 query = """
 SELECT
@@ -118,8 +121,9 @@ ORDER BY date DESC
 df = pd.read_sql_query(query, conn, parse_dates=["date"])
 
 if df.empty:
-    st.info(t("Aucun achat/vente enregistré."))
+    st.info(t("No purchases found."))
 else:
+    # Formatage monétaire
     for col in ["purchase_price", "sale_price", "gain"]:
         df[col] = df[col].fillna(0).map(lambda x: f"{x:.2f} TND")
 
@@ -136,21 +140,21 @@ def to_excel(dataframe):
 excel_data = to_excel(df)
 
 st.download_button(
-    label=t("Télécharger l'historique en Excel"),
+    label=t("Download purchase history (Excel)"),
     data=excel_data,
-    file_name=f"historique_achat_vente_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+    file_name=f"purchase_history_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
 # --- Export PDF ---
 def to_pdf(dataframe):
     def clean_text(text):
-        return ''.join(c for c in str(text) if ord(c) < 128)  # Supprime emojis, caractères spéciaux
+        return ''.join(c for c in str(text) if ord(c) < 128)  # Supprime caractères non-ASCII
 
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, "Historique Achat/Vente", ln=True, align="C")
+    pdf.cell(0, 10, "Purchase History", ln=True, align="C")
     pdf.ln(5)
 
     for _, row in dataframe.iterrows():
@@ -158,20 +162,19 @@ def to_pdf(dataframe):
             f"{clean_text(row['date'].strftime('%Y-%m-%d'))} | "
             f"{clean_text(row['product'])} | "
             f"{clean_text(row['category'])} > {clean_text(row['subcategory'])} | "
-            f"{clean_text(row['supplier'])} | Qté: {row['quantity']} | "
-            f"Achat: {row['purchase_price']} | Vente: {row['sale_price']} | Gain: {row['gain']}"
+            f"{clean_text(row['supplier'])} | Qty: {row['quantity']} | "
+            f"Purchase: {row['purchase_price']} | Sale: {row['sale_price']} | Gain: {row['gain']}"
         )
         pdf.cell(0, 8, line, ln=True)
 
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    return pdf_bytes
+    return pdf.output(dest='S').encode('latin1')
 
 pdf_data = to_pdf(df)
 
 st.download_button(
-    label=t("Télécharger l'historique en PDF"),
+    label=t("Download purchase history (PDF)"),
     data=pdf_data,
-    file_name=f"historique_achat_vente_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+    file_name=f"purchase_history_{datetime.now().strftime('%Y-%m-%d')}.pdf",
     mime="application/pdf"
 )
 
