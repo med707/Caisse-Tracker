@@ -1,77 +1,101 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import matplotlib.pyplot as plt
 from datetime import datetime
-import sys
-import os
-
-# Add current directory to Python path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # for main dir
-
 from lang_utils import get_translation
 
-# --- LANGUAGE CONFIG ---
+# --- LANGUE ---
 lang = st.sidebar.selectbox("🌍 Langue / اللغة", ["fr", "ar"], index=0)
 _ = lambda key: get_translation(key, lang)
 
-# --- PAGE CONFIG ---
+# --- CONFIG PAGE ---
 st.set_page_config(
-    page_title=_("statistics_page_title"),
+    page_title=_("Statistiques"),
     layout="centered",
     page_icon="📈"
 )
 
-st.title(_("statistics_page_title"))
+st.title(_("Statistiques des achats/ventes"))
 
-# --- DATABASE CONNECTION ---
+# --- CONNEXION DB ---
 conn = sqlite3.connect("supermarket.db", check_same_thread=False)
 
-# --- LOAD DATA ---
+# --- CHARGEMENT DONNÉES ---
 query = "SELECT * FROM purchases ORDER BY date DESC"
 df = pd.read_sql_query(query, conn)
 
 if df.empty:
-    st.warning(_("no_data_found"))
+    st.warning(_("Aucune donnée trouvée"))
     st.stop()
 
-# --- DATA CLEANUP ---
-df.columns = ["ID", "Produit", "Prix", "Quantité", "Date", "Catégorie", "Sous-catégorie", "Fournisseur"]
-df["Total"] = df["Prix"] * df["Quantité"]
+# --- NOMMAGE COLONNES ---
+df.columns = [
+    "ID",
+    "Produit",
+    "Prix",
+    "Quantité",
+    "Date",
+    "Catégorie",
+    "Sous-catégorie",
+    "Fournisseur",
+    "Prix d'achat",
+    "Prix de vente"
+]
+
+# Convertir la colonne Date en datetime
 df["Date"] = pd.to_datetime(df["Date"])
 
-# --- FILTERS ---
-st.subheader(_("filters_title"))
+# Calculs
+df["Total achat"] = df["Prix d'achat"] * df["Quantité"]
+df["Total vente"] = df["Prix de vente"] * df["Quantité"]
+df["Gain"] = df["Total vente"] - df["Total achat"]
+
+# --- FILTRAGE PAR DATE ---
+st.subheader(_("Filtres"))
 col1, col2 = st.columns(2)
 with col1:
-    start_date = st.date_input(_("start_date_label"), value=datetime.today().replace(day=1))
+    start_date = st.date_input(_("Date début"), value=df["Date"].min().date())
 with col2:
-    end_date = st.date_input(_("end_date_label"), value=datetime.today())
+    end_date = st.date_input(_("Date fin"), value=df["Date"].max().date())
 
 mask = (df["Date"] >= pd.to_datetime(start_date)) & (df["Date"] <= pd.to_datetime(end_date))
 filtered_df = df.loc[mask]
 
 if filtered_df.empty:
-    st.info(_("no_products_found"))
+    st.info(_("Aucun produit trouvé pour cette plage de dates"))
 else:
-    st.subheader(_("global_statistics"))
-    col1, col2, col3 = st.columns(3)
-    col1.metric(_("total_value"), f"{filtered_df['Total'].sum():.2f} TND")
-    col2.metric(_("average_price"), f"{filtered_df['Prix'].mean():.2f} TND")
-    col3.metric(_("total_quantity"), int(filtered_df['Quantité'].sum()))
+    st.subheader(_("Statistiques globales"))
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(_("Valeur totale achats"), f"{filtered_df['Total achat'].sum():.2f} TND")
+    col2.metric(_("Valeur totale ventes"), f"{filtered_df['Total vente'].sum():.2f} TND")
+    col3.metric(_("Gain total"), f"{filtered_df['Gain'].sum():.2f} TND")
+    col4.metric(_("Quantité totale"), int(filtered_df['Quantité'].sum()))
 
-    # --- BY CATEGORY ---
-    st.subheader(_("category_expenses"))
-    cat_totals = filtered_df.groupby("Catégorie")["Total"].sum().sort_values(ascending=False)
+    # --- PAR CATÉGORIE ---
+    st.subheader(_("Dépenses par catégorie"))
+    cat_totals = filtered_df.groupby("Catégorie")["Total achat"].sum().sort_values(ascending=False)
     st.bar_chart(cat_totals)
 
-    # --- BY SUPPLIER ---
-    st.subheader(_("supplier_expenses"))
-    if "Fournisseur" in filtered_df.columns:
-        supp_totals = filtered_df.groupby("Fournisseur")["Total"].sum().sort_values(ascending=False)
-        st.bar_chart(supp_totals)
+    st.subheader(_("Ventes par catégorie"))
+    cat_sales = filtered_df.groupby("Catégorie")["Total vente"].sum().sort_values(ascending=False)
+    st.bar_chart(cat_sales)
 
-# --- CLOSE DB ---
+    st.subheader(_("Gains par catégorie"))
+    cat_gains = filtered_df.groupby("Catégorie")["Gain"].sum().sort_values(ascending=False)
+    st.bar_chart(cat_gains)
+
+    # --- PAR FOURNISSEUR ---
+    st.subheader(_("Dépenses par fournisseur"))
+    supp_totals = filtered_df.groupby("Fournisseur")["Total achat"].sum().sort_values(ascending=False)
+    st.bar_chart(supp_totals)
+
+    st.subheader(_("Ventes par fournisseur"))
+    supp_sales = filtered_df.groupby("Fournisseur")["Total vente"].sum().sort_values(ascending=False)
+    st.bar_chart(supp_sales)
+
+    st.subheader(_("Gains par fournisseur"))
+    supp_gains = filtered_df.groupby("Fournisseur")["Gain"].sum().sort_values(ascending=False)
+    st.bar_chart(supp_gains)
+
+# --- FERMETURE DB ---
 conn.close()
-
