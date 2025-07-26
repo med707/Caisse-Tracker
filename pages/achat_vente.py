@@ -97,7 +97,7 @@ with st.form("add_form", clear_on_submit=True):
             conn.commit()
             gain = (sale_price - purchase_price) * quantity
             st.success(f"✅ {product} {t('Added')}. {t('Gain')}: {gain:.2f} TND")
-            st.experimental_rerun()
+            st.rerun()
 
 # --- Affichage historique avec gains ---
 st.header(t("Purchase History"))
