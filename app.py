@@ -1,32 +1,28 @@
-import pyrebase
 import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, firestore
 
-# --- Firebase config ---
-firebaseConfig = {
-    'apiKey': 'your_api_key',
-    'authDomain': 'your_project.firebaseapp.com',
-    'projectId': 'your_project_id',
-    'storageBucket': 'your_project.appspot.com',
-    'messagingSenderId': 'your_sender_id',
-    'appId': 'your_app_id',
-    'databaseURL': ''
-}
+# Initialisation Firebase (une seule fois)
+@st.cache_resource
+def init_firebase():
+    if not firebase_admin._apps:
+        cred = credentials.Certificate("serviceAccountKey.json")
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
 
-firebase = pyrebase.initialize_app(firebaseConfig)
-auth = firebase.auth()
+db = init_firebase()
 
-# --- Streamlit login form ---
-st.title("Login")
+st.title("Exemple Streamlit + Firebase Firestore")
 
-email = st.text_input("Email")
-password = st.text_input("Password", type="password")
+# Exemple : ajouter un document
+if st.button("Ajouter un document test"):
+    doc_ref = db.collection("tests").document()
+    doc_ref.set({"message": "Bonjour depuis Streamlit!"})
+    st.success("Document ajouté !")
 
-if st.button("Login"):
-    try:
-        user = auth.sign_in_with_email_and_password(email, password)
-        st.success(f"Logged in as {email}")
-        # Use session_state to track login
-        st.session_state['user'] = email
-    except:
-        st.error("Invalid credentials")
+# Exemple : lire des documents
+docs = db.collection("tests").stream()
+st.write("Documents dans la collection 'tests':")
+for doc in docs:
+    st.write(f"- {doc.id}: {doc.to_dict()}")
 
