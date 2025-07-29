@@ -82,7 +82,8 @@ else:
                 ))
                 conn.commit()
                 st.success("✅ Achat modifié avec succès.")
-                st.experimental_rerun()
+                st.rerun()
+
             except Exception as e:
                 st.error(f"Erreur lors de la mise à jour : {e}")
     else:
