@@ -1,6 +1,6 @@
 import streamlit as st
-from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 from lang_utils import get_translation
 
@@ -10,32 +10,33 @@ t = lambda key: get_translation(key, lang)
 
 st.title("🧾 " + t("Quick Entry for Purchase"))
 
-# --- Get Postgres URL from secrets ---
+# --- Get database URL from Streamlit secrets ---
 DATABASE_URL = st.secrets["database"]["url"]
 
-# --- Create engine ---
-engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 5})
+# --- Create SQLAlchemy engine ---
+engine = create_engine(DATABASE_URL)
 
-# --- Check if table exists, create if not ---
-inspector = inspect(engine)
-if "purchases" not in inspector.get_table_names():
+# --- Initialize database table if not exists ---
+def init_db():
     with engine.connect() as conn:
         conn.execute(text("""
-            CREATE TABLE purchases (
-                id SERIAL PRIMARY KEY,
-                product TEXT,
-                category TEXT,
-                subcategory TEXT,
-                supplier TEXT,
-                quantity INTEGER,
-                purchase_price REAL,
-                sale_price REAL,
-                date DATE
-            )
+        CREATE TABLE IF NOT EXISTS purchases (
+            id SERIAL PRIMARY KEY,
+            product TEXT NOT NULL,
+            category TEXT,
+            subcategory TEXT,
+            supplier TEXT,
+            quantity INTEGER,
+            purchase_price NUMERIC,
+            sale_price NUMERIC,
+            date DATE
+        )
         """))
         conn.commit()
 
-# --- Categories data ---
+init_db()
+
+# --- Category setup (your original CATEGORIES dict) ---
 CATEGORIES = {
     "🍼 Dépôt": {"subcategories": ["Medded", "Mlika", "Jamila"], "suppliers": []},
     "🍰 Cake": {"subcategories": ["Tom", "Moulin d'Or"], "suppliers": []},
@@ -60,9 +61,10 @@ CATEGORIES = {
     "🎉 Autres": {"subcategories": [], "suppliers": []}
 }
 
-# --- UI Inputs ---
+# --- Streamlit UI ---
 category = st.selectbox("📂 " + t("Category"), list(CATEGORIES.keys()))
 
+# Handle subcategories (including nested)
 sub = CATEGORIES[category].get("subcategories", [])
 subcategory = ""
 if isinstance(sub, dict):
@@ -73,6 +75,7 @@ elif isinstance(sub, list) and sub:
 else:
     subcategory = st.text_input("📁 " + t("Subcategory"))
 
+# Suppliers
 suppliers = CATEGORIES[category].get("suppliers", [])
 supplier = st.selectbox("🏢 " + t("Supplier"), suppliers) if suppliers else st.text_input("🏢 " + t("Supplier"))
 
@@ -82,23 +85,26 @@ purchase_price = st.number_input("💰 " + t("Purchase price"), min_value=0.0, s
 sale_price = st.number_input("🏷️ " + t("Sale price"), min_value=0.0, step=0.1)
 date = st.date_input("📅 " + t("Date"), value=datetime.today())
 
-# --- Insert into DB ---
 if st.button("✅ " + t("Add Purchase")):
-    if not product:
+    if not product.strip():
         st.warning(t("Please fill in the product name."))
     else:
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO purchases (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date)
-                VALUES (:product, :category, :subcategory, :supplier, :quantity, :purchase_price, :sale_price, :date)
-            """), {
-                "product": product,
-                "category": category,
-                "subcategory": subcategory,
-                "supplier": supplier,
-                "quantity": quantity,
-                "purchase_price": purchase_price,
-                "sale_price": sale_price,
-                "date": date
-            })
-        st.success(t("Purchase added successfully!"))
+        # Insert into DB
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO purchases (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date)
+                    VALUES (:product, :category, :subcategory, :supplier, :quantity, :purchase_price, :sale_price, :date)
+                """), {
+                    "product": product,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "supplier": supplier,
+                    "quantity": quantity,
+                    "purchase_price": purchase_price,
+                    "sale_price": sale_price,
+                    "date": date
+                })
+            st.success(t("Purchase added successfully!"))
+        except SQLAlchemyError as e:
+            st.error(f"{t('Database error')}: {str(e)}")
