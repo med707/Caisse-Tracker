@@ -80,4 +80,3 @@ else:
     st.info(_("aucune_donnee_mois"))
 
 conn.close()
-
