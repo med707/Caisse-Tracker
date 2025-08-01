@@ -5,4 +5,7 @@ pyrebase4
 requests
 fpdf
 openpyxl
+sqlalchemy
+psycopg2-binary
+
 
