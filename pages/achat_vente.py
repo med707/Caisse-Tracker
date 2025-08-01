@@ -1,44 +1,41 @@
 import streamlit as st
-import sqlite3
-import pandas as pd
-import os
+from sqlalchemy import create_engine, text, inspect
+from sqlalchemy.exc import OperationalError
 from datetime import datetime
 from lang_utils import get_translation
-from backup_utils import create_backup, restore_latest_backup
 
-# --- CONFIGURATION LANGUE ---
+# --- LANGUE ---
 lang = st.sidebar.selectbox("🌍 Langue / اللغة", ["fr", "ar"], index=0)
 t = lambda key: get_translation(key, lang)
 
 st.title("🧾 " + t("Quick Entry for Purchase"))
 
-# --- Restauration auto si base absente ---
-if not os.path.exists("supermarket.db"):
-    restored = restore_latest_backup()
-    if not restored:
-        st.error(t("❌ La base de données est introuvable et aucune sauvegarde n'a été trouvée."))
+# --- Get Postgres URL from secrets ---
+DATABASE_URL = st.secrets["database"]["url"]
 
-# --- Connexion DB ---
-conn = sqlite3.connect("supermarket.db", check_same_thread=False)
-cursor = conn.cursor()
+# --- Create engine ---
+engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 5})
 
-# --- Création table si inexistante ---
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS purchases (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product TEXT,
-    category TEXT,
-    subcategory TEXT,
-    supplier TEXT,
-    quantity INTEGER,
-    purchase_price REAL,
-    sale_price REAL,
-    date TEXT
-)
-""")
-conn.commit()
+# --- Check if table exists, create if not ---
+inspector = inspect(engine)
+if "purchases" not in inspector.get_table_names():
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE purchases (
+                id SERIAL PRIMARY KEY,
+                product TEXT,
+                category TEXT,
+                subcategory TEXT,
+                supplier TEXT,
+                quantity INTEGER,
+                purchase_price REAL,
+                sale_price REAL,
+                date DATE
+            )
+        """))
+        conn.commit()
 
-# --- CATEGORIES ---
+# --- Categories data ---
 CATEGORIES = {
     "🍼 Dépôt": {"subcategories": ["Medded", "Mlika", "Jamila"], "suppliers": []},
     "🍰 Cake": {"subcategories": ["Tom", "Moulin d'Or"], "suppliers": []},
@@ -63,10 +60,9 @@ CATEGORIES = {
     "🎉 Autres": {"subcategories": [], "suppliers": []}
 }
 
-# --- Interface ---
+# --- UI Inputs ---
 category = st.selectbox("📂 " + t("Category"), list(CATEGORIES.keys()))
 
-# Gestion des sous-catégories (y compris imbriquées)
 sub = CATEGORIES[category].get("subcategories", [])
 subcategory = ""
 if isinstance(sub, dict):
@@ -77,7 +73,6 @@ elif isinstance(sub, list) and sub:
 else:
     subcategory = st.text_input("📁 " + t("Subcategory"))
 
-# Fournisseurs
 suppliers = CATEGORIES[category].get("suppliers", [])
 supplier = st.selectbox("🏢 " + t("Supplier"), suppliers) if suppliers else st.text_input("🏢 " + t("Supplier"))
 
@@ -85,17 +80,25 @@ product = st.text_input("📦 " + t("Product name"))
 quantity = st.number_input("🔢 " + t("Quantity"), min_value=1, step=1)
 purchase_price = st.number_input("💰 " + t("Purchase price"), min_value=0.0, step=0.1)
 sale_price = st.number_input("🏷️ " + t("Sale price"), min_value=0.0, step=0.1)
-date = st.date_input("📅 " + t("Date"), value=datetime.today()).strftime("%Y-%m-%d")
+date = st.date_input("📅 " + t("Date"), value=datetime.today())
 
-# --- Sauvegarde en base ---
+# --- Insert into DB ---
 if st.button("✅ " + t("Add Purchase")):
-    if product:
-        cursor.execute("""
-            INSERT INTO purchases (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date))
-        conn.commit()
-        create_backup()  # 💾 Sauvegarde auto
-        st.success(t("Purchase added successfully!"))
-    else:
+    if not product:
         st.warning(t("Please fill in the product name."))
+    else:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO purchases (product, category, subcategory, supplier, quantity, purchase_price, sale_price, date)
+                VALUES (:product, :category, :subcategory, :supplier, :quantity, :purchase_price, :sale_price, :date)
+            """), {
+                "product": product,
+                "category": category,
+                "subcategory": subcategory,
+                "supplier": supplier,
+                "quantity": quantity,
+                "purchase_price": purchase_price,
+                "sale_price": sale_price,
+                "date": date
+            })
+        st.success(t("Purchase added successfully!"))
