@@ -16,6 +16,14 @@ DATABASE_URL = st.secrets["database"]["url"]
 # --- Create SQLAlchemy engine ---
 engine = create_engine(DATABASE_URL)
 
+try:
+    with engine.connect() as conn:
+        db_version = conn.execute(text("SELECT version()")).fetchone()
+    st.success(f"✅ Connected to: {db_version[0]}")
+except Exception as e:
+    st.error(f"❌ Connection failed: {e}")
+
+
 # --- Initialize database table if not exists ---
 def init_db():
     with engine.connect() as conn:
