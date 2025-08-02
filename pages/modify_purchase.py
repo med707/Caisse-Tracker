@@ -1,25 +1,42 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 from datetime import datetime
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 st.title("✏️ Modifier un achat")
 
-# --- Connexion à la base de données ---
-conn = sqlite3.connect("supermarket.db")
-cursor = conn.cursor()
+# --- Récupérer l'URL de la base de données depuis Streamlit secrets ---
+DATABASE_URL = st.secrets["database"]["url"]
 
-# --- Récupération des données ---
-query = "SELECT * FROM purchases ORDER BY date DESC"
-df = pd.read_sql_query(query, conn)
+# --- Créer le moteur SQLAlchemy ---
+engine = create_engine(DATABASE_URL)
 
-# --- Filtres ---
+# --- Vérification connexion ---
+try:
+    with engine.connect() as conn:
+        db_version = conn.execute(text("SELECT version()")).fetchone()
+    st.success(f"✅ Connecté à la base: {db_version[0]}")
+except SQLAlchemyError as e:
+    st.error(f"❌ Erreur de connexion à la base: {e}")
+    st.stop()
+
+# --- Charger les données ---
+try:
+    with engine.connect() as conn:
+        df = pd.read_sql("SELECT * FROM purchases ORDER BY date DESC", conn)
+except Exception as e:
+    st.error(f"Erreur lors du chargement des données: {e}")
+    st.stop()
+
+# --- Sidebar filtres ---
 st.sidebar.header("🔎 Filtres")
 
 with st.sidebar:
     start_date = st.date_input("📅 Date de début", value=datetime.today().replace(day=1))
     end_date = st.date_input("📅 Date de fin", value=datetime.today())
-    category_filter = st.selectbox("📂 Catégorie", ["Tous"] + sorted(df["category"].dropna().unique().tolist()))
+    categories = ["Tous"] + sorted(df["category"].dropna().unique().tolist()) if not df.empty else ["Tous"]
+    category_filter = st.selectbox("📂 Catégorie", categories)
     search_term = st.text_input("🔍 Rechercher un produit")
 
 # --- Application des filtres ---
@@ -71,23 +88,25 @@ else:
 
         if st.button("💾 Enregistrer les modifications"):
             try:
-                cursor.execute("""
-                    UPDATE purchases SET
-                        product = ?, category = ?, subcategory = ?, supplier = ?,
-                        quantity = ?, purchase_price = ?, sale_price = ?, date = ?
-                    WHERE id = ?
-                """, (
-                    new_product, new_category, new_subcategory, new_supplier,
-                    new_quantity, new_purchase_price, new_sale_price, new_date.strftime("%Y-%m-%d"),
-                    selected_id
-                ))
-                conn.commit()
+                with engine.begin() as conn:
+                    conn.execute(text("""
+                        UPDATE purchases SET
+                            product = :product, category = :category, subcategory = :subcategory, supplier = :supplier,
+                            quantity = :quantity, purchase_price = :purchase_price, sale_price = :sale_price, date = :date
+                        WHERE id = :id
+                    """), {
+                        "product": new_product,
+                        "category": new_category,
+                        "subcategory": new_subcategory,
+                        "supplier": new_supplier,
+                        "quantity": new_quantity,
+                        "purchase_price": new_purchase_price,
+                        "sale_price": new_sale_price,
+                        "date": new_date.strftime("%Y-%m-%d"),
+                        "id": selected_id
+                    })
                 st.success("✅ Achat modifié avec succès.")
-                # Pas de st.experimental_rerun, on informe juste l'utilisateur
-            except Exception as e:
+            except SQLAlchemyError as e:
                 st.error(f"Erreur lors de la mise à jour : {e}")
     else:
         st.info("⛔ Saisissez un ID valide à partir du tableau.")
-
-# --- Fermeture ---
-conn.close()
