@@ -1,33 +1,34 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-from fpdf import FPDF
 
-# --- Connexion base de données PostgreSQL via mkdb ---
+# --- Connexion à la base via SQLAlchemy ---
 DATABASE_URL = st.secrets["database"]["url"]
 engine = create_engine(DATABASE_URL)
 
-# --- Créer table mouvements si nécessaire ---
-create_table_sql = """
-CREATE TABLE IF NOT EXISTS inventory_movements (
-    id SERIAL PRIMARY KEY,
-    product TEXT,
-    depot TEXT,
-    movement_type TEXT,  -- 'entrée' ou 'sortie'
-    quantity INTEGER,
-    price NUMERIC,
-    date DATE
-)
-"""
+# --- Créer table inventory_movements si elle n'existe pas ---
+def init_db():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS inventory_movements (
+                id SERIAL PRIMARY KEY,
+                product TEXT,
+                depot TEXT,
+                movement_type TEXT,  -- 'entry' ou 'exit'
+                quantity INTEGER,
+                price NUMERIC,
+                date DATE
+            )
+        """))
 
-with engine.begin() as conn:
-    conn.execute(text(create_table_sql))
+init_db()
 
 # --- Langue (exemple simple) ---
 lang = st.sidebar.selectbox("🌍 Langue / اللغة", ["fr", "ar"], index=0)
-t = lambda key: key  # Replace with your translation function if needed
+t = lambda key: key  # Remplace par ta fonction traduction si besoin
 
 st.title(t("Mouvements d'inventaire"))
 
@@ -45,13 +46,13 @@ with st.form("movement_form", clear_on_submit=True):
         if not product.strip():
             st.error(t("Veuillez saisir un nom de produit."))
         else:
-            insert_sql = """
-            INSERT INTO inventory_movements (product, depot, movement_type, quantity, price, date)
-            VALUES (:product, :depot, :movement_type, :quantity, :price, :date)
-            """
             try:
                 with engine.begin() as conn:
-                    conn.execute(text(insert_sql), {
+                    conn.execute(text("""
+                        INSERT INTO inventory_movements 
+                        (product, depot, movement_type, quantity, price, date)
+                        VALUES (:product, :depot, :movement_type, :quantity, :price, :date)
+                    """), {
                         "product": product.strip(),
                         "depot": depot,
                         "movement_type": movement_type.lower(),
@@ -66,40 +67,34 @@ with st.form("movement_form", clear_on_submit=True):
 # --- Affichage historique ---
 st.header(t("Historique des mouvements"))
 
-select_sql = """
-SELECT id, product, depot, movement_type, quantity, price, date
-FROM inventory_movements
-ORDER BY date DESC
-"""
+select_sql = "SELECT * FROM inventory_movements ORDER BY date DESC"
+with engine.connect() as conn:
+    df = pd.read_sql(select_sql, conn)
 
-try:
-    with engine.connect() as conn:
-        df = pd.read_sql(select_sql, conn, parse_dates=["date"])
-except SQLAlchemyError as e:
-    st.error(f"{t('Erreur lors de la récupération des données')}: {e}")
-    st.stop()
+# Conversion manuelle de la colonne date
+df["date"] = pd.to_datetime(df["date"])
 
 if df.empty:
     st.info(t("Aucun mouvement enregistré."))
 else:
-    # Entrées et sorties
+    # Séparer entrées et sorties
     entries = df[df["movement_type"] == "entrée"]
     exits = df[df["movement_type"] == "sortie"]
 
-    # Pour approx durée, fusionner sur product + depot, 1:1 possible approximative
+    # Fusionner pour calculer durée en dépôt
     merged = pd.merge(
         entries, exits,
         on=["product", "depot"],
         suffixes=("_entry", "_exit")
     )
 
-    # Calcul durée (jours)
     merged["days_in_depot"] = (merged["date_exit"] - merged["date_entry"]).dt.days
     merged.loc[merged["days_in_depot"] < 0, "days_in_depot"] = None
 
     st.subheader(t("Détails des mouvements avec durée en dépôt"))
     st.dataframe(merged[[
-        "product", "depot", "quantity_entry", "date_entry", "quantity_exit", "date_exit", "days_in_depot"
+        "product", "depot", "quantity_entry", "date_entry",
+        "quantity_exit", "date_exit", "days_in_depot"
     ]])
 
     # Résumé stock total par dépôt
@@ -114,12 +109,11 @@ else:
 
     st.dataframe(stock[["depot", "product", "stock"]])
 
-    # Liens vers page achats (à adapter)
     st.markdown("### Liens vers achats")
     for prod in stock["product"].unique():
-        st.markdown(f"- [{prod}](#)")  # Remplacer '#' par lien réel
+        st.markdown(f"- [{prod}](#)  <!-- Remplacer '#' par le lien réel de la page achat/vente -->")
 
-    # --- Export Excel ---
+    # Export Excel
     def to_excel(df):
         import io
         output = io.BytesIO()
@@ -135,7 +129,7 @@ else:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # --- Export PDF ---
+    # Export PDF
     def to_pdf(dataframe):
         pdf = FPDF()
         pdf.add_page()
