@@ -1,43 +1,47 @@
+# caisse-tracker.py (PostgreSQL / mkdb version)
 import streamlit as st
-import sqlite3
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timedelta
 import pandas as pd
 from io import BytesIO
 from fpdf import FPDF
 
-# --- Connexion à la base de données ---
-conn = sqlite3.connect("supermarket.db", check_same_thread=False)
-cursor = conn.cursor()
+# --- Connect to PostgreSQL using Streamlit secrets ---
+try:
+    DATABASE_URL = st.secrets["database"]["url"]
+    engine = create_engine(DATABASE_URL)
 
-# --- Vérifie et crée la table si elle n'existe pas ---
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS caisse (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        montant REAL,
-        date TEXT,
-        periode TEXT
-    )
-''')
-conn.commit()
+    # Test connection
+    with engine.connect() as conn:
+        db_version = conn.execute(text("SELECT version()")).fetchone()
+    st.success(f"✅ Connected to: {db_version[0]}")
+except SQLAlchemyError as e:
+    st.error(f"❌ Database connection failed: {e}")
+    st.stop()
 
-# --- Ajoute la colonne "periode" si elle n'existe pas ---
-cursor.execute("PRAGMA table_info(caisse)")
-columns = [col[1] for col in cursor.fetchall()]
-if "periode" not in columns:
-    cursor.execute("ALTER TABLE caisse ADD COLUMN periode TEXT")
-    conn.commit()
+# --- Create table if not exists ---
+with engine.begin() as conn:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS caisse (
+            id SERIAL PRIMARY KEY,
+            montant NUMERIC,
+            date DATE,
+            periode TEXT
+        )
+    """))
 
-# --- Titre ---
+# --- UI title ---
 st.title("💰 Caisse Journalière - Entrée par Plage Horaire")
 
-# --- Définir les plages horaires ---
+# --- Periods ---
 PERIODES = [
     "🕐 04–14",
     "🕑 14–17",
     "🌙 17–02"
 ]
 
-# --- Formulaire de saisie ---
+# --- Form to add entry ---
 with st.form("add_entry", clear_on_submit=True):
     montant = st.number_input("Montant", min_value=0.0, format="%.2f")
     date_val = st.date_input("Date", value=datetime.now().date())
@@ -45,68 +49,57 @@ with st.form("add_entry", clear_on_submit=True):
     submit = st.form_submit_button("Enregistrer")
 
     if submit:
-        cursor.execute(
-            "INSERT INTO caisse (montant, date, periode) VALUES (?, ?, ?)",
-            (montant, date_val.strftime("%Y-%m-%d"), periode)
-        )
-        conn.commit()
+        with engine.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO caisse (montant, date, periode)
+                VALUES (:montant, :date, :periode)
+            """), {
+                "montant": montant,
+                "date": date_val,
+                "periode": periode
+            })
         st.success(f"✅ Montant {montant:.2f} TND enregistré pour la plage {periode}.")
 
-# --- Lecture des données ---
-df = pd.read_sql_query("SELECT * FROM caisse ORDER BY date DESC", conn)
+# --- Load data ---
+with engine.connect() as conn:
+    df = pd.read_sql("SELECT * FROM caisse ORDER BY date DESC", conn)
 
 if df.empty:
     st.info("Aucune donnée enregistrée.")
     st.stop()
 
-# --- Résumé par date et plage ---
+# --- Summary by date ---
 st.subheader("📊 Résumé par date et plage horaire")
 
-# Choix de la date
-dates = sorted(df["date"].unique(), reverse=True)
+dates = sorted(df["date"].astype(str).unique(), reverse=True)
 selected_date = st.selectbox("Sélectionner une date", dates)
 
-# Filtrer les données de la date sélectionnée
-df_date = df[df["date"] == selected_date]
-
-# Créer un résumé par période
+df_date = df[df["date"].astype(str) == selected_date]
 summary = df_date.groupby("periode")["montant"].sum().reindex(PERIODES).fillna(0)
 
-# Affichage du graphique
 st.bar_chart(summary)
 st.write(summary.to_frame(name="Total TND"))
 
-# Total du jour
+# Total of the day
 total_day = df_date["montant"].sum()
 st.success(f"🧾 Total du {selected_date} : {total_day:.2f} TND")
 
-# Comparaison avec autres jours
+# --- Comparisons ---
 st.subheader("📈 Comparaison avec d'autres jours")
-
 selected_datetime = datetime.strptime(selected_date, "%Y-%m-%d")
 
-# Hier
-yesterday = (selected_datetime - timedelta(days=1)).strftime("%Y-%m-%d")
-# Même jour de la semaine dernière
-last_week_same_day = (selected_datetime - timedelta(days=7)).strftime("%Y-%m-%d")
-# Même jour du mois dernier (approximatif)
-try:
-    last_month_same_day = selected_datetime.replace(month=selected_datetime.month - 1).strftime("%Y-%m-%d")
-except ValueError:
-    last_month_same_day = (selected_datetime - timedelta(days=30)).strftime("%Y-%m-%d")
-
 comparisons = {
-    "Hier": yesterday,
-    "Même jour semaine dernière": last_week_same_day,
-    "Même jour mois dernier": last_month_same_day
+    "Hier": (selected_datetime - timedelta(days=1)).strftime("%Y-%m-%d"),
+    "Même jour semaine dernière": (selected_datetime - timedelta(days=7)).strftime("%Y-%m-%d"),
+    "Même jour mois dernier": (selected_datetime - timedelta(days=30)).strftime("%Y-%m-%d")
 }
 
 for label, comp_date in comparisons.items():
-    comp_df = df[df["date"] == comp_date]
+    comp_df = df[df["date"].astype(str) == comp_date]
     comp_total = comp_df["montant"].sum()
     st.info(f"{label} ({comp_date}) : {comp_total:.2f} TND")
 
-# --- Télécharger les données en Excel ---
+# --- Export Excel ---
 st.subheader("⬇️ Télécharger les données")
 
 def to_excel(dataframe):
@@ -116,7 +109,6 @@ def to_excel(dataframe):
     return output.getvalue()
 
 excel_file = to_excel(df)
-
 st.download_button(
     label="📥 Télécharger toutes les données (Excel)",
     data=excel_file,
@@ -124,7 +116,7 @@ st.download_button(
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
 
-# --- Télécharger les données en PDF ---
+# --- Export PDF ---
 def to_pdf(dataframe):
     pdf = FPDF()
     pdf.add_page()
@@ -132,24 +124,17 @@ def to_pdf(dataframe):
     pdf.cell(200, 10, txt="Résumé Caisse", ln=True, align="C")
     pdf.ln(10)
 
-    for index, row in dataframe.iterrows():
-        line = f"{row['date']} | {row['periode']} | {row['montant']:.2f} TND"
-        # Encodage sûr sans erreurs Unicode
+    for _, row in dataframe.iterrows():
+        line = f"{row['date']} | {row['periode']} | {float(row['montant']):.2f} TND"
         line = line.encode('latin-1', 'replace').decode('latin-1')
         pdf.cell(200, 8, txt=line, ln=True)
 
-    pdf_output = pdf.output(dest='S').encode('latin-1')
-    return pdf_output
+    return pdf.output(dest='S').encode('latin-1')
 
 pdf_file = to_pdf(df)
-
 st.download_button(
     label="📄 Télécharger en PDF",
     data=pdf_file,
     file_name=f"caisse_{datetime.now().strftime('%Y-%m-%d')}.pdf",
     mime="application/pdf"
 )
-
-# --- Fermer la connexion ---
-conn.close()
-
