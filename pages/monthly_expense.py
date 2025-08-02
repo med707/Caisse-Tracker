@@ -1,82 +1,159 @@
+# finance.py - Saisie Caisse, Crédit et Dépenses (PostgreSQL / mkdb)
 import streamlit as st
-import sqlite3
 import pandas as pd
-import matplotlib.pyplot as plt
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
-import calendar
-import sys
-import os
+from io import BytesIO
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lang_utils import get_translation
+st.set_page_config(page_title="💰 Gestion Financière", layout="wide")
 
-# --- CONFIGURATION LANGUE ---
-lang = st.sidebar.selectbox("🌍 Langue / اللغة", ["fr", "ar"], index=0)
-_ = lambda key: get_translation(key, lang)
+# --- Connexion PostgreSQL ---
+try:
+    DATABASE_URL = st.secrets["database"]["url"]
+    engine = create_engine(DATABASE_URL)
 
-st.set_page_config(
-    page_title=_("depense_mensuel"),
-    layout="wide",
-    page_icon="📅"
-)
+    with engine.connect() as conn:
+        db_version = conn.execute(text("SELECT version()")).fetchone()
+    st.success(f"✅ Connecté à : {db_version[0]}")
+except SQLAlchemyError as e:
+    st.error(f"❌ Connexion base échouée : {e}")
+    st.stop()
 
-# Connect DB
-conn = sqlite3.connect("supermarket.db", check_same_thread=False)
-cursor = conn.cursor()
+# --- Création des tables si non existantes ---
+with engine.begin() as conn:
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS caisse (
+            id SERIAL PRIMARY KEY,
+            montant NUMERIC,
+            date DATE,
+            periode TEXT
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS credits (
+            id SERIAL PRIMARY KEY,
+            montant NUMERIC,
+            date DATE,
+            note TEXT
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS expenses (
+            id SERIAL PRIMARY KEY,
+            montant NUMERIC,
+            date DATE,
+            type TEXT
+        )
+    """))
 
-# Sidebar return button
-if st.sidebar.button(_("Retour")):
-    st.switch_page("inev")
+# --- Sélecteur de section ---
+section = st.radio("Choisir une opération :", ["💰 Caisse", "🏦 Crédit", "💸 Dépense"], horizontal=True)
 
-st.title(_("Dépenses tout le long du mois"))
+# ==========================
+# 💰 CAISSE
+# ==========================
+if section == "💰 Caisse":
+    st.subheader("💰 Ajouter à la Caisse")
+    with st.form("form_caisse", clear_on_submit=True):
+        montant = st.number_input("Montant (TND)", min_value=0.0, format="%.2f")
+        date_val = st.date_input("Date", value=datetime.now().date())
+        periode = st.selectbox("Plage horaire", ["🕐 04–14", "🕑 14–17", "🌙 17–02"])
+        submit_caisse = st.form_submit_button("Enregistrer")
+        if submit_caisse:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO caisse (montant, date, periode)
+                    VALUES (:montant, :date, :periode)
+                """), {
+                    "montant": montant,
+                    "date": date_val,
+                    "periode": periode
+                })
+            st.success(f"✅ {montant:.2f} TND ajouté à la caisse ({periode})")
 
-# Select year and month
-today = datetime.today()
-years = list(range(today.year - 5, today.year + 1))
-year = st.selectbox(_("Année"), years, index=years.index(today.year))
-month = st.selectbox(_("Mois"), list(calendar.month_name)[1:], index=today.month - 1)
+# ==========================
+# 🏦 CRÉDIT
+# ==========================
+elif section == "🏦 Crédit":
+    st.subheader("🏦 Ajouter un Crédit")
+    with st.form("form_credit", clear_on_submit=True):
+        montant = st.number_input("Montant du crédit (TND)", min_value=0.0, format="%.2f")
+        date_val = st.date_input("Date", value=datetime.now().date())
+        note = st.text_input("Note / Source du crédit")
+        submit_credit = st.form_submit_button("Enregistrer")
+        if submit_credit:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO credits (montant, date, note)
+                    VALUES (:montant, :date, :note)
+                """), {
+                    "montant": montant,
+                    "date": date_val,
+                    "note": note
+                })
+            st.success(f"✅ Crédit de {montant:.2f} TND enregistré")
 
-# Compute start and end dates
-start_date = datetime(year, month.index(month) + 1 if isinstance(month, str) else month, 1)
-_, last_day = calendar.monthrange(year, month.index(month) + 1 if isinstance(month, str) else month)
-end_date = datetime(year, month.index(month) + 1 if isinstance(month, str) else month, last_day)
+# ==========================
+# 💸 DÉPENSES
+# ==========================
+elif section == "💸 Dépense":
+    st.subheader("💸 Ajouter une Dépense")
+    with st.form("form_depense", clear_on_submit=True):
+        montant = st.number_input("Montant dépensé (TND)", min_value=0.0, format="%.2f")
+        date_val = st.date_input("Date", value=datetime.now().date())
+        type_depense = st.selectbox("Type de dépense", [
+            "Facture Électricité",
+            "Facture Eau",
+            "Loyer",
+            "Consommation",
+            "Autre"
+        ])
+        submit_depense = st.form_submit_button("Enregistrer")
+        if submit_depense:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO expenses (montant, date, type)
+                    VALUES (:montant, :date, :type)
+                """), {
+                    "montant": montant,
+                    "date": date_val,
+                    "type": type_depense
+                })
+            st.success(f"✅ Dépense de {montant:.2f} TND enregistrée ({type_depense})")
 
-start_str = start_date.strftime("%Y-%m-%d")
-end_str = end_date.strftime("%Y-%m-%d")
+# ==========================
+# 📊 Historique & Export
+# ==========================
+st.subheader("📜 Historique des Opérations")
 
-query = """
-    SELECT date, SUM(price * quantity) as total
-    FROM purchases
-    WHERE date BETWEEN ? AND ?
-    GROUP BY date
-    ORDER BY date
-"""
-cursor.execute(query, (start_str, end_str))
-data = cursor.fetchall()
+tables = {
+    "💰 Caisse": "caisse",
+    "🏦 Crédit": "credits",
+    "💸 Dépenses": "expenses"
+}
 
-if data:
-    df = pd.DataFrame(data, columns=["Date", "Total"])
-    df["Date"] = pd.to_datetime(df["Date"])
-    
-    # Ensure all days present
-    all_days = pd.date_range(start=start_date, end=end_date)
-    df = df.set_index("Date").reindex(all_days, fill_value=0).rename_axis("Date").reset_index()
+selected_table = st.selectbox("Choisir la table à afficher", list(tables.keys()))
+table_name = tables[selected_table]
 
-    # Show table
-    st.subheader(_("Dépenses journalières"))
-    st.dataframe(df.style.format({"Total": "{:.2f} TND"}), height=400)
+with engine.connect() as conn:
+    df_hist = pd.read_sql(f"SELECT * FROM {table_name} ORDER BY date DESC", conn)
 
-    # Plot
-    st.subheader(_("Graphique des dépenses journalières"))
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(df["Date"], df["Total"], marker='o', linestyle='-')
-    ax.set_title(f"{_('Dépenses journalières pour')} {month} {year}")
-    ax.set_xlabel(_("Date"))
-    ax.set_ylabel(_("Total (TND)"))
-    ax.grid(True, linestyle='--', alpha=0.7)
-    plt.xticks(rotation=45)
-    st.pyplot(fig)
+if df_hist.empty:
+    st.info("Aucune donnée enregistrée.")
 else:
-    st.info(_("aucune_donnee_mois"))
+    st.dataframe(df_hist)
 
-conn.close()
+    # Export Excel
+    def to_excel(dataframe):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            dataframe.to_excel(writer, index=False)
+        return output.getvalue()
+
+    st.download_button(
+        label="📥 Télécharger (Excel)",
+        data=to_excel(df_hist),
+        file_name=f"{table_name}_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
