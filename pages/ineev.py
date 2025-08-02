@@ -1,9 +1,10 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 import numpy as np
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 import sys
 import os
 
@@ -22,9 +23,13 @@ st.set_page_config(
     page_icon="📊"
 )
 
-# --- CONNEXION DB ---
-conn = sqlite3.connect("supermarket.db", check_same_thread=False)
-cursor = conn.cursor()
+# --- Connexion mkdb PostgreSQL ---
+try:
+    DATABASE_URL = st.secrets["database"]["url"]
+    engine = create_engine(DATABASE_URL)
+except SQLAlchemyError as e:
+    st.error(f"❌ Erreur de connexion à la base : {e}")
+    st.stop()
 
 # --- TITRE ---
 st.title(_("Comparaison Hebdomadaire des Achats"))
@@ -51,9 +56,10 @@ def get_dates_for_day(day_name, weeks=4):
 dates = get_dates_for_day(day_of_week, weeks=4)
 date_strs = [d.strftime("%Y-%m-%d") for d in dates]
 
-# --- RÉCUPÉRATION DES DONNÉES ---
 if date_strs:
-    placeholders = ",".join("?" for _ in date_strs)
+    placeholders = ", ".join([f":date{i}" for i in range(len(date_strs))])
+    params = {f"date{i}": date_strs[i] for i in range(len(date_strs))}
+
     query = f"""
         SELECT date, product, category, supplier,
                SUM(quantity * purchase_price) AS total_achat,
@@ -63,13 +69,18 @@ if date_strs:
         GROUP BY date, product, category, supplier
         ORDER BY date DESC
     """
-    cursor.execute(query, date_strs)
-    data = cursor.fetchall()
+
+    try:
+        with engine.connect() as conn:
+            data = conn.execute(text(query), params).fetchall()
+    except SQLAlchemyError as e:
+        st.error(f"Erreur lors de la récupération des données: {e}")
+        st.stop()
 
     if data:
         df = pd.DataFrame(data, columns=["Date", _("Produit"), _("Catégorie"), _("Fournisseur"), _("Total Achat"), _("Total Vente")])
 
-        # Pivot table: valeurs par produit + catégorie
+        # Pivot table
         pivot_df = df.pivot_table(
             index=[_("Produit"), _("Catégorie"), _("Fournisseur")],
             columns="Date",
@@ -77,26 +88,24 @@ if date_strs:
             fill_value=0
         ).reset_index()
 
-        # Colonnes de dates triées
-        date_columns = sorted([c for c in pivot_df.columns if isinstance(c, datetime) or isinstance(c, str) and "-" in c], reverse=True)
+        # Sort date columns descending
+        date_columns = sorted([c for c in pivot_df.columns if c not in [_("Produit"), _("Catégorie"), _("Fournisseur")]], reverse=True)
         pivot_df = pivot_df[[_("Produit"), _("Catégorie"), _("Fournisseur")] + date_columns]
 
-        # Calculs différences
+        # Calculate difference and percentage variation
         if len(date_columns) >= 2:
             latest_date, prev_date = date_columns[0], date_columns[1]
             pivot_df[_("Différence 7j")] = pivot_df[latest_date] - pivot_df[prev_date]
             pivot_df[_("Variation %")] = (pivot_df[_("Différence 7j")] / pivot_df[prev_date].replace(0, np.nan)) * 100
             pivot_df[_("Variation %")] = pivot_df[_("Variation %")].replace([np.inf, -np.inf], 0).fillna(0)
 
-            # Formatage
             pivot_df[_("Différence 7j")] = pivot_df[_("Différence 7j")].apply(lambda x: f"{x:+.2f}" if x != 0 else "0.00")
             pivot_df[_("Variation %")] = pivot_df[_("Variation %")].apply(lambda x: f"{x:+.1f}%" if not pd.isna(x) else "N/A")
 
-        # Affichage du tableau
         st.subheader(_("Détail par produit, catégorie et fournisseur"))
         st.dataframe(pivot_df, height=600)
 
-        # Totaux globaux par date
+        # Totaux par date
         totals_per_date = df.groupby("Date")[_("Total Achat")].sum().reset_index().sort_values("Date", ascending=True)
         total_values = totals_per_date[_("Total Achat")].tolist()
 
@@ -105,7 +114,7 @@ if date_strs:
         for i, date in enumerate(dates):
             cols[i].metric(f"{date.strftime('%d %b')}", f"{total_values[i]:.2f} TND")
 
-        # Graphique des tendances
+        # Graphique
         st.subheader(_("Évolution des dépenses"))
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.plot([d.strftime("%d %b") for d in dates[::-1]], total_values[::-1],
@@ -121,5 +130,3 @@ if date_strs:
         st.warning(f"{_('Aucune donnée disponible pour')} {day_of_week}.")
 else:
     st.warning(_("Aucune date sélectionnée."))
-
-conn.close()
